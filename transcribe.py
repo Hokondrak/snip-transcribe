@@ -234,6 +234,43 @@ def write_to_clipboard(text: str, cfg: dict):
 
 
 # ---------------------------------------------------------------------------
+# Ollama auto-start
+# ---------------------------------------------------------------------------
+def _try_start_ollama(cfg: dict) -> bool:
+    """Attempt to start Ollama serve in the background. Returns True if it comes online."""
+    import subprocess
+    import requests
+
+    model_cfg = cfg.get("model", {})
+    endpoint = model_cfg.get("endpoint", "http://localhost:11434")
+
+    try:
+        # Launch ollama serve as a detached background process
+        subprocess.Popen(
+            ["ollama", "serve"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW,
+        )
+    except FileNotFoundError:
+        return False  # ollama not in PATH
+    except Exception:
+        return False
+
+    # Poll until Ollama responds (up to 15 seconds)
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        try:
+            r = requests.get(f"{endpoint}/", timeout=2)
+            if r.status_code == 200:
+                return True
+        except Exception:
+            pass
+        time.sleep(1)
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
@@ -262,14 +299,30 @@ def main():
             text = call_ollama(base64_image, cfg)
         except Exception as e:
             error_str = str(e)
-            # Connection refused → Ollama not running
-            if "ConnectionError" in type(e).__name__ or "Connection refused" in error_str:
-                notify(
-                    "SnipTranscribe",
-                    "Ollama not running. Start it with: ollama serve",
-                    cfg,
-                    is_error=True,
-                )
+            is_conn_error = "ConnectionError" in type(e).__name__ or "Connection refused" in error_str
+
+            # Connection refused → try to auto-start Ollama, then retry
+            if is_conn_error:
+                if _try_start_ollama(cfg):
+                    # Ollama started — retry the call
+                    try:
+                        text = call_ollama(base64_image, cfg)
+                    except Exception as e2:
+                        notify(
+                            "SnipTranscribe",
+                            "Ollama started but transcription failed. Is the model pulled?",
+                            cfg,
+                            is_error=True,
+                        )
+                        sys.exit(1)
+                else:
+                    notify(
+                        "SnipTranscribe",
+                        "Ollama not running and could not be started automatically.",
+                        cfg,
+                        is_error=True,
+                    )
+                    sys.exit(1)
             # 404 → Model not pulled
             elif "404" in error_str or "not found" in error_str.lower():
                 model_name = cfg.get("model", {}).get("name", "glm-ocr")
@@ -279,6 +332,7 @@ def main():
                     cfg,
                     is_error=True,
                 )
+                sys.exit(1)
             else:
                 # Truncate long error messages
                 short_err = error_str[:120] if len(error_str) > 120 else error_str
@@ -288,7 +342,7 @@ def main():
                     cfg,
                     is_error=True,
                 )
-            sys.exit(1)
+                sys.exit(1)
 
         # ── Validate response ─────────────────────────────────────────
         if not text:

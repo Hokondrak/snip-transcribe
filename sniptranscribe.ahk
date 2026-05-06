@@ -78,6 +78,18 @@ ConvertBinding(binding) {
 }
 
 ; ---------------------------------------------------------------------------
+; Ensure Ollama is running (silent, no console window)
+; ---------------------------------------------------------------------------
+try {
+    ; Check if Ollama is already running by looking for its process
+    if !ProcessExist("ollama.exe") {
+        Run("ollama serve", , "Hide")
+        ; Give it a moment to start up
+        Sleep(1000)
+    }
+}
+
+; ---------------------------------------------------------------------------
 ; Register the hotkey
 ; ---------------------------------------------------------------------------
 Hotkey(HotkeyBinding, TriggerTranscription)
