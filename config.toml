@@ -1,0 +1,26 @@
+[hotkey]
+binding = "Ctrl+Shift+T"
+
+[model]
+name = "glm-ocr"
+keep_alive = "15m"
+endpoint = "http://localhost:11434"
+
+[prompt]
+template = """
+Transcribe the text content of this image. Preserve structure using \
+Markdown: headings, bullets, numbered lists, code blocks for code or \
+monospace text, and tables where applicable. Do not add commentary, \
+explanations, or surrounding text — output only the transcription. \
+If the image contains a diagram or chart with no readable text, \
+output a single line: [diagram: <one-line description>].
+"""
+
+[output]
+format = "markdown"
+strip_trailing_whitespace = true
+
+[notifications]
+on_start = false
+on_success = true
+on_error = true
