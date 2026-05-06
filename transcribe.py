@@ -23,7 +23,7 @@ from pathlib import Path
 APPDATA_DIR = Path(os.environ.get("APPDATA", "")) / "sniptranscribe"
 CONFIG_FILENAME = "config.toml"
 LOCK_FILENAME = "sniptranscribe.lock"
-MAX_IMAGE_EDGE = 1568
+MAX_IMAGE_EDGE = 1024
 POLL_INTERVAL_S = 0.2
 POLL_TIMEOUT_S = 30.0
 REQUEST_TIMEOUT_S = 120
@@ -171,17 +171,38 @@ def poll_clipboard_for_image(timeout_s: float = POLL_TIMEOUT_S) -> "Image.Image 
 # Image preprocessing
 # ---------------------------------------------------------------------------
 def preprocess_image(img: "Image.Image") -> str:
-    """Resize if needed, convert to PNG, return raw base64 string."""
-    from PIL import Image
+    """Trim whitespace, resize if needed, convert to PNG, return raw base64 string."""
+    from PIL import Image, ImageOps
+
+    # Convert to RGB first (needed for all subsequent operations)
+    if img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+
+    # Trim whitespace borders — reduces image tokens sent to the model
+    # getbbox() on an inverted image finds the bounding box of non-white content
+    try:
+        gray = img.convert("L")
+        # Invert so white→black, then find bbox of non-black (i.e. non-white original)
+        inverted = ImageOps.invert(gray)
+        bbox = inverted.getbbox()
+        if bbox:
+            # Add a small padding (8px) so text isn't right at the edge
+            pad = 8
+            left = max(0, bbox[0] - pad)
+            upper = max(0, bbox[1] - pad)
+            right = min(img.width, bbox[2] + pad)
+            lower = min(img.height, bbox[3] + pad)
+            cropped = img.crop((left, upper, right, lower))
+            # Only use the crop if it actually removed meaningful whitespace (>10%)
+            if cropped.width * cropped.height < img.width * img.height * 0.9:
+                img = cropped
+    except Exception:
+        pass  # If trimming fails for any reason, proceed with the original image
 
     # Resize so longest edge ≤ MAX_IMAGE_EDGE
     w, h = img.size
     if max(w, h) > MAX_IMAGE_EDGE:
         img.thumbnail((MAX_IMAGE_EDGE, MAX_IMAGE_EDGE), Image.LANCZOS)
-
-    # Convert to RGB if necessary (e.g. RGBA screenshots)
-    if img.mode not in ("RGB", "L"):
-        img = img.convert("RGB")
 
     # Encode as PNG → base64
     buf = io.BytesIO()
